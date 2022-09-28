@@ -3,6 +3,7 @@ import { simd } from "https://unpkg.com/wasm-feature-detect?module";
 
 import flyInAndRotate from "./fly-in-and-rotate.js";
 import animatePath from "./animate-path.js";
+import animateNearbyCondos from "./animate-nearby-condos.js";
 
 
 import { createGeoJSONCircle } from './util.js'
@@ -12,11 +13,6 @@ const { gender, stage, square: squareQueryParam, prod: prodQueryParam } = Object
 
 const prod = prodQueryParam === 'true'
 const square = squareQueryParam === 'true'
-
-// if (square) {
-//   document.getElementById("map").style.height = '1080px';
-//   document.getElementById("map").style.width = '1080px';
-// }
 
 mapboxgl.accessToken =
   "pk.eyJ1IjoiY2hyaXN3aG9uZ21hcGJveCIsImEiOiJjbDR5OTNyY2cxZGg1M2luejcxZmJpaG1yIn0.mUZ2xk8CLeBFotkPvPJHGg";
@@ -35,8 +31,6 @@ const trackGeoJson = {
   properties: {},
   geometry: geometries
 }
-console.log(trackGeoJson, "trackGeoJson")
-console.log(typeof(trackGeoJson), "type of trackGeoJson")
 
 const bounds = turf.bbox(trackGeoJson)
 
@@ -62,9 +56,8 @@ map.fitBounds(bounds, {
 
 
 map.on("load", async () => {
-  // add 3d, sky and fog
-  // add3D();
-  addPathSourceAndLayer(trackGeoJson)
+  const markers = addPathSourceAndLayer(trackGeoJson)
+  const pathSource = addPathLine(trackGeoJson)
 
   await map.once('idle');
 
@@ -106,79 +99,35 @@ map.on("load", async () => {
 
 
   // kick off the animations
-  await playAnimations(trackGeoJson);
-
+  const value = await playAnimations(trackGeoJson, markers, pathSource);
+  console.log(value, "value")
+  console.log("animations played")
   // stop recording
   map.off('render', frame);
+  console.log("off rendering")
   mapboxgl.restoreNow();
 
   // download the encoded video file
   const mp4 = encoder.end();
-  console.log(mp4, "mp4")
+  console.log("end encoding")
+
   const anchor = document.createElement("a");
   anchor.href = URL.createObjectURL(new Blob([mp4], { type: "video/mp4" }));
   anchor.download = `map_render_example`;
-  anchor.click();
-
+  // anchor.click();
+  // console.log("download video")
 });
 
-const add3D = () => {
-  // add map 3d terrain and sky layer and fog
-  // Add some fog in the background
-  map.setFog({
-    range: [0.5, 10],
-    color: "white",
-    "horizon-blend": 0.2,
-  });
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
-  // Add a sky layer over the horizon
-  map.addLayer({
-    id: "sky",
-    type: "sky",
-    paint: {
-      "sky-type": "atmosphere",
-      "sky-atmosphere-color": "rgba(85, 151, 210, 0.5)",
-    },
-  });
 
-  // // Add terrain source, with slight exaggeration
-  // map.addSource("mapbox-dem", {
-  //   type: "raster-dem",
-  //   url: "mapbox://mapbox.terrain-rgb",
-  //   tileSize: 512,
-  //   maxzoom: 14,
-  // });
-  // map.setTerrain({ source: "mapbox-dem", exaggeration: 1.5 });
-};
-
-const playAnimations = async (trackGeoJson) => {
+const playAnimations = async (trackGeoJson, markers, pathSource) => {
   return new Promise(async (resolve) => {
 
-    // add a geojson source and layer for the linestring to the map
-    // addPathSourceAndLayer(trackGeojson);
-
-    // get the start of the linestring, to be used for animating a zoom-in from high altitude
-    // var targetLngLat = {
-    //   lng: trackGeojson.geometry.coordinates[0][0],
-    //   lat: trackGeojson.geometry.coordinates[0][1],
-    // };
-
-    // animate zooming in to the start point, get the final bearing and altitude for use in the next animation
-    // const { bearing, altitude } = await flyInAndRotate({
-    //   map,
-    //   targetLngLat,
-    //   duration: prod ? 7000 : 5000,
-    //   startAltitude: 1000000,
-    //   endAltitude: 12000,
-    //   startBearing: 0,
-    //   endBearing: -20,
-    //   startPitch: 40,
-    //   endPitch: 50,
-    //   prod
-    // });
-
-    const bearing = -20
-    const altitude = 12000
+    let bearing = -20
+    let altitude = 12000
 
     // follow the path while slowly rotating the camera, passing in the camera bearing and altitude from the previous animation
     await animatePath({
@@ -192,29 +141,45 @@ const playAnimations = async (trackGeoJson) => {
       trackGeoJson
     });
 
-    // get the bounds of the linestring, use fitBounds() to animate to a final view
-    // const bounds = turf.bbox(trackGeojson);
-    // map.fitBounds(bounds, {
-    //   duration: 3000,
-    //   pitch: 30,
-    //   bearing: 0,
-    //   padding: 120,
-    //   maxZoom: 15,
-    // });
+    markers.forEach((marker)=>{
+      marker.togglePopup()
+    })
 
-    setTimeout(() => {
-      resolve()
-    }, 10)
+    // Dismount animations and markers in path animation
+    await sleep(1500)
 
+    // need to remove layer then source
+    map.removeLayer(`${pathSource}-layer`)
+    map.removeSource(pathSource)
+    markers.forEach((marker) => {
+      marker.togglePopup()
+    })
+
+    await sleep(1000)
+
+    map.easeTo({
+      center: trackGeoJson.geometry.coordinates[0],
+      essential: true,
+      bearing: 30,
+      zoom: 16,
+      curve: 1,
+      duration: 4000,
+      easing(t) {
+        return t;
+      }
+    });
+
+    const condoMarkers = addNearbyCondosSourceAndLayer()
+    await animateNearbyCondos({
+      duration: 4000,
+      condoMarkers
+    })
+
+    resolve()
   })
 };
 
-
-
-
-
 const addPathSourceAndLayer = (trackGeojson) => {
-  console.log("add path first")
   const startGeoJson = {
     type: "Feature",
     geometry: {
@@ -223,7 +188,8 @@ const addPathSourceAndLayer = (trackGeojson) => {
     },
     properties: {
       title: "Pinnacle @ Duxton",
-      description: "Home base"
+      description: "Home base",
+      imageUrl: "https://upload.wikimedia.org/wikipedia/commons/f/f3/Pinnacle%40Duxton%2C_Singapore_-_20100101.jpg"
     }
   }
 
@@ -235,50 +201,105 @@ const addPathSourceAndLayer = (trackGeojson) => {
     },
     properties: {
       title: "Singapore General Hospital",
-      description : "Place we go to get help"
+      description : "Place we go to get help",
+      imageUrl: "https://thomsonadsett.com/wp-content/uploads/2015/10/NK0128-2-LR1-900x732.jpg"
     }
   }
 
-  console.log(startGeoJson, 'startGeoJson')
-  console.log(endGeoJson, 'endGeoJson')
+  const geojsons = [startGeoJson, endGeoJson]
+  const markers = []
 
-  map.loadImage(
-    'https://docs.mapbox.com/mapbox-gl-js/assets/custom_marker.png',
-    (error, image) => {
-      if (error) {
-        console.log(error, "error")
-        throw error;
+  geojsons.forEach((feature)=>{
+    // create a HTML element for each feature
+    const el = document.createElement("div");
+    el.className = "marker";
+    el.setAttribute("id", feature.properties.title)
+    el.style.backgroundImage = "url(" + feature.properties.imageUrl + ")"
+
+    // make a marker for each feature and add to the map
+    const marker = new mapboxgl.Marker(el)
+      .setLngLat(feature.geometry.coordinates)
+      .setPopup(
+        new mapboxgl.Popup({ closeButton:false, offset: 25 }) // add popups
+          .setHTML(
+            `<h3>${feature.properties.title}</h3><p>${feature.properties.description}</p>`
+          )
+      )
+      .addTo(map);
+      markers.push(marker)
+  })
+
+  return markers
+};
+
+const addNearbyCondosSourceAndLayer = () =>{
+  const nearbyCondoGeoJson = [
+    {
+      type: "Feature",
+      geometry: {
+        type: "Point",
+        "marker-size": "small",
+        coordinates: [103.84049836517845, 1.2761723395175102]
+      },
+      properties: {
+        title: "The Beacon Condo",
+        description: "",
+        "marker-size": "small",
+        imageUrl: "https://lh5.googleusercontent.com/p/AF1QipP-xQZmqJ61G1FO9ML4ENG85V-ZSzwLNJplpk8i=w408-h306-k-no"
       }
-      map.addImage('custom-marker', image);
-      map.addSource('points', {
-        type: "geojson",
-        data: {
-          type: "FeatureCollection",
-          features: [startGeoJson, endGeoJson]
-        }
-      })
-      // Add a symbol layer
-      map.addLayer({
-        'id': 'points',
-        'type': 'symbol',
-        'source': 'points',
-        'layout': {
-        'icon-image': 'custom-marker',
-        // get the title name from the source's "title" property
-        'text-field': ['get', 'title'],
-        'text-font': [
-        'Open Sans Semibold',
-        'Arial Unicode MS Bold'
-        ],
-        'text-offset': [0, 1.25],
-        'text-anchor': 'top'
-        }
-      });
-    }
-  );
+    },
+    {
+      type: "Feature",
+      geometry: {
+        type: "Point",
+        coordinates: [103.8384717216855, 1.2764555659972008],
+      },
+      properties: {
+        title: "Sky Everton",
+        description: "",
+        "marker-size": "small",
+        imageUrl: "https://lh5.googleusercontent.com/p/AF1QipPadn8s1Lbp34Uq7hGuqo7u6W5p7PDgaUy6w81R=w408-h270-k-no"
+      }
+    },
+    {
+      type: "Feature",
+      geometry: {
+        type: "Point",
+        coordinates: [103.84566013713186, 1.2774852782351251],
+      },
+      properties: {
+        title: "Wallich Residence",
+        description: "",
+        "marker-size": "small",
+        imageUrl: "https://lh5.googleusercontent.com/p/AF1QipNfKaYUZgNo9o7f4ODW1LWOL2RRIX8E2_l539Rp=w408-h544-k-no"
+      }
+    },
+  ]
+  const markers = []
+  nearbyCondoGeoJson.forEach((feature)=>{
+    // create a HTML element for each feature
+    const el = document.createElement("div");
+    el.className = "marker";
+    el.setAttribute("id", feature.properties.title)
+    el.style.backgroundImage = "url(" + feature.properties.imageUrl + ")"
+
+    // make a marker for each feature and add to the map
+    const marker = new mapboxgl.Marker(el)
+      .setLngLat(feature.geometry.coordinates)
+      .setPopup(
+        new mapboxgl.Popup({ closeButton: false, offset: 25 }) // add popups
+          .setHTML(
+            `<h3>${feature.properties.title}</h3><p>${feature.properties.description}</p>`
+          )
+      )
+      .addTo(map);
+      markers.push(marker)
+  })
+  return markers
+}
 
 
-
+const addPathLine = (trackGeojson) => {
   // Add a line feature and layer. This feature will get updated as we progress the animation
   map.addSource("line", {
     type: "geojson",
@@ -286,6 +307,7 @@ const addPathSourceAndLayer = (trackGeojson) => {
     lineMetrics: true,
     data: trackGeojson,
   });
+
   map.addLayer({
     id: "line-layer",
     type: "line",
@@ -301,66 +323,5 @@ const addPathSourceAndLayer = (trackGeojson) => {
     },
   });
 
-  // map.addSource("start-pin-base", {
-  //   type: "geojson",
-  //   data: createGeoJSONCircle(trackGeojson.geometry.coordinates[0], 0.01)
-  // });
-
-  // map.addSource("start-pin-top", {
-  //   type: "geojson",
-  //   data: createGeoJSONCircle(trackGeojson.geometry.coordinates[0], 0.01)
-  // });
-
-  // map.addSource("end-pin-base", {
-  //   type: "geojson",
-  //   data: createGeoJSONCircle(trackGeojson.geometry.coordinates.slice(-1)[0], 0.01)
-  // });
-
-  // map.addSource("end-pin-top", {
-  //   type: "geojson",
-  //   data: createGeoJSONCircle(trackGeojson.geometry.coordinates.slice(-1)[0], 0.01)
-  // });
-
-  // map.addLayer({
-  //   id: "start-fill-pin-base",
-  //   type: "fill-extrusion",
-  //   source: "start-pin-base",
-  //   paint: {
-  //     'fill-extrusion-color': '#0bfc03',
-  //     'fill-extrusion-height': 100
-  //   }
-  // });
-  // map.addLayer({
-  //   id: "start-fill-pin-top",
-  //   type: "fill-extrusion",
-  //   source: "start-pin-top",
-  //   paint: {
-  //     'fill-extrusion-color': '#0bfc03',
-  //     'fill-extrusion-base': 1000,
-  //     'fill-extrusion-height': 100
-  //   }
-  // });
-
-  // map.addLayer({
-  //   id: "end-fill-pin-base",
-  //   type: "fill-extrusion",
-  //   source: "end-pin-base",
-  //   paint: {
-  //     'fill-extrusion-color': '#eb1c1c',
-  //     'fill-extrusion-height': 100
-  //   }
-  // });
-  // map.addLayer({
-  //   id: "end-fill-pin-top",
-  //   type: "fill-extrusion",
-  //   source: "end-pin-top",
-  //   paint: {
-  //     'fill-extrusion-color': '#eb1c1c',
-  //     'fill-extrusion-base': 1000,
-  //     'fill-extrusion-height': 1200
-  //   }
-  // });
-
-
-};
-
+  return "line"
+}

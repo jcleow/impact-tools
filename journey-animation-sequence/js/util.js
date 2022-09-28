@@ -28,7 +28,8 @@ const computeCameraPosition = (
 
   var correctedLng = targetPosition.lng + lngDiff;
   var correctedLat = targetPosition.lat - latDiff;
-
+  console.log("correctedLng", correctedLng)
+  console.log("correctedLat", correctedLat)
   const newCameraPosition = {
     lng: correctedLng,
     lat: correctedLat
